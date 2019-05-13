@@ -15,19 +15,20 @@
 #include <vtkProperty.h>
 #include <vtkNamedColors.h>
 
-#include "gdt/math/box.h"
+#include "owl/common/math/box.h"
+#include <set>
 
-using namespace gdt;
+using namespace owl;
 
 std::vector<double> vertex;
-std::vector<double> perCellValue;
+std::vector<std::string> scalarArrayName;
+std::vector<std::vector<double>> scalarArrayData; // one vector per field
 std::vector<size_t> hex_index;
 
 #ifndef PRINT
-# define PRINT(var) std::cout << #var << "=" << var << std::endl;
+# define PRINT(var) std::cout << #var << "=" << (var) << std::endl;
 # define PING std::cout << __FILE__ << "::" << __LINE__ << ": " << __PRETTY_FUNCTION__ << std::endl;
 #endif
-
 
 void readFile(const std::string fileName)
 {
@@ -88,31 +89,34 @@ void readFile(const std::string fileName)
   if (!cellData)
     throw std::runtime_error("could not read cell data ....");
   
-    // cellData->PrintSelf(std::cout,vtkIndent());
-    // std::cout << "==================================================================" << std::endl;
-    // for (int i = 0; i < cellData->GetNumberOfArrays(); i++) {
-    //   std::cout << "\tArray " << i
-    //             << " is named "
-    //             << (cellData->GetArrayName(i) ? cellData->GetArrayName(i) : "NULL")
-    //             << std::endl;
-    // }
+  // cellData->PrintSelf(std::cout,vtkIndent());
+  // std::cout << "==================================================================" << std::endl;
+  if (scalarArrayData.empty()) {
+    scalarArrayData.resize(cellData->GetNumberOfArrays());
+    scalarArrayName.resize(cellData->GetNumberOfArrays());
+  }
+  for (int i = 0; i < cellData->GetNumberOfArrays(); i++) {
+    scalarArrayName[i] = cellData->GetArrayName(i);
+    std::cout << "\tArray " << i
+              << " is named "
+              << (cellData->GetArrayName(i) ? cellData->GetArrayName(i) : "NULL")
+              << std::endl;
 
-  vtkDataArray *dataArray = cellData->GetArray(0);
-  if (!dataArray)
-    throw std::runtime_error("could not read data array from cell data");
-  for (int i=0;i<numCells;i++)
-    perCellValue.push_back(dataArray->GetTuple1(i));
+    vtkDataArray *dataArray = cellData->GetArray(i);
+    if (!dataArray)
+      throw std::runtime_error("could not read data array from cell data");
+    for (int j=0;j<numCells;j++)
+      scalarArrayData[i].push_back(dataArray->GetTuple1(j));
     // std::cout << "   dat[" << i << "] = " << dataArray->GetTuple1(i) << std::endl;
     // std::cout << "==================================================================" << std::endl;
-  // }
-
+    // }
+    
+  }
   std::cout << "-------------------------------------------------------" << std::endl;
   std::cout << "done reading " << fileName << " : "
             << std::endl << "  " << (vertex.size()/3) << " vertices "
             << std::endl << "  " << (hex_index.size()/8) << " hexes" << std::endl;
-
   
-
 }
 
 
@@ -126,7 +130,10 @@ int project(double f)
     PRINT(commonFactor);
     throw std::runtime_error("not a multiple of commonFactor");
   }
-  return int(f/commonFactor);
+  int asInt = int(f/commonFactor);
+  if (asInt*commonFactor != f)
+    throw std::runtime_error("error2: not a multiple of commonFactor");
+  return asInt;
 }
 
 vec3i project(const vec3d v)
@@ -228,34 +235,84 @@ int main ( int argc, char *argv[] )
   PRINT(numVertices);
 
   std::ofstream cellStream(outFileName+".cells");
-  std::ofstream scalarStream(outFileName+".scalars");
-  
+
   for (int i=0;i<numHexes;i++) {
+    std::set<int> set_x, set_y, set_z;
     Hex hex = hexArray[i];
     box3i bounds;
     for (int j=0;j<8;j++) {
       int vtxID = hex.idx[j];
       vec3i vtx = project(vertexArray[vtxID]);
       bounds.extend(vtx);
+      set_x.insert(vtx.x);
+      set_y.insert(vtx.y);
+      set_z.insert(vtx.z);
     }
-    double scalar = perCellValue[i];
+    // PING;
+    // PRINT(bounds);
+    // PRINT(set_x.size());
+    // PRINT(set_y.size());
+    // PRINT(set_z.size());
+    if (set_x.size() != 2 ||
+        set_y.size() != 2 ||
+        set_z.size() != 2) {
+      PING;
+      PRINT(bounds);
+      PRINT(bounds.size());
+      int szx = bounds.size().x;
+      for (int j=0;j<8;j++) {
+        int vtxID = hex.idx[j];
+        vec3i vtx = project(vertexArray[vtxID]);
+        PRINT(vtx);
+      }
+      for (int j=0;j<8;j++) {
+        int vtxID = hex.idx[j];
+        vec3i vtx = project(vertexArray[vtxID]);
+        PRINT((vtx.x & (szx-1)));
+        PRINT((vtx.y & (szx-1)));
+        PRINT((vtx.z & (szx-1)));
+      }
+      throw std::runtime_error("vertices do not form a regular hex!");
+    }
     vec3i size = bounds.size();
-    if (!(size.x == size.y && (size.x == size.z)))
+    if (!((size.x == size.y) && (size.x == size.z)))
       throw std::runtime_error("not a cubic cell...");
     
     int cellWidth = size.x;
     int level = int(log2(cellWidth));
-    assert((1<<level) == cellWidth);
+    if ((1<<level) != cellWidth)
+      throw std::runtime_error("error in computing cell width");
 
     SingleCell cell;
     cell.level = level;
     cell.lower = bounds.lower;
 
     cellStream.write((char*)&cell,sizeof(cell));
-    scalarStream.write((char*)&scalar,sizeof(scalar));
     // std::cout << "cell " << bounds.lower << " size " << bounds.size() << std::endl;
   }
   std::cout << "Done. Written " << numHexes << " cells..." << std::endl;
+
+  for (int j=0;j<scalarArrayName.size();j++) {
+    std::cout << "writing scalar array " << scalarArrayName[j] << std::endl;
+    std::ofstream scalarStream(outFileName+"."+scalarArrayName[j]+".scalars");
+    for (int i=0;i<numHexes;i++) {
+      float scalar = scalarArrayData[j][i];
+      scalarStream.write((char*)&scalar,sizeof(scalar));
+    }
+  }
+
+  std::ofstream obj("test.obj");
+  for (int i=0;i<numVertices;i++)
+    obj << "v " << vertexArray[i].x << " " << vertexArray[i].y << " " << vertexArray[i].z << std::endl;
+  for (int i=0;i<numHexes;i++) {
+    Hex hex = hexArray[i];
+
+    int vtx[8];
+    for (int j=0;j<8;j++)
+      vtx[j] = hex.idx[j]+i;
+    
+    obj << "f " << vtx[0] << " " << vtx[1] << " " << vtx[2] << " " << vtx[3] << std::endl;
+  }
   
   // for (auto &idx : hex_index) idx += 1;
   // out.write((char*)hex_index.data(),hex_index.size()*sizeof(hex_index[0]));

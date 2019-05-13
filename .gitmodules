@@ -1,0 +1,6 @@
+[submodule "external/glui"]
+	path = submodules/glui
+	url = https://github.com/ingowald/glui
+[submodule "submodules/owl"]
+	path = submodules/owl
+	url = https://github.com/owl-project/owl
