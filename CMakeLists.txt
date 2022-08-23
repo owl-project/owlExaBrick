@@ -111,7 +111,6 @@ add_executable(exaViewer
   exa/ExaBricks.cpp
   exa/Regions.cpp
   exa/Texture.cpp
-  exa/generateFibonacciSphere.cpp
   exa/ColorMapper.cpp
   ${ptxCode}
   )
